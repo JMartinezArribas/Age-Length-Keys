@@ -1,0 +1,114 @@
+---
+title: "Age-Length-Keys Analysis"
+author: "Javier Martinez-Arribas (javimartinezarribas@gmail.com)"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output: html_document
+---
+
+```{r, echo=T, message=F, warning=F, error=F}
+library(tidyverse)
+library(readxl)
+library(rmarkdown)
+library(FSA)
+library(nnet)
+```
+
+e carregar os dados...
+
+```{r, echo=T, message=F, warning=F, error=F}
+dbicon <-  DBI::dbConnect(RPostgres::Postgres(),
+                          db = Sys.getenv('POSTGRES_DB'), 
+                          host = Sys.getenv('POSTGRES_HOST'), 
+                          port = Sys.getenv('POSTGRES_PORT'), 
+                          user = Sys.getenv('POSTGRES_USER'),
+                          password = Sys.getenv('POSTGRES_PASSWORD'))
+sql <- 'SELECT * FROM "tblALK"'
+df <- DBI::dbGetQuery(dbicon, sql)
+DBI::dbDisconnect(dbicon)
+```
+
+
+
+```{r, echo=T, message=F, warning=F, error=F}
+#dir = '../../../DATA/input/'
+#f1 = paste(dir,'ALK.XLSX',sep="")
+#df = read_excel(f1)
+```
+
+
+```{r, echo=T, message=F, warning=F, error=F}
+df <- df %>% mutate(lcat5=lencat(LF,w=5))
+
+df.unaged <- filter(df,is.na(Idade))
+df.aged <- filter(df,!is.na(Idade))
+
+all(is.na(df.unaged$Idade))       
+any(is.na(df.aged$Idade))
+
+( alk.freq <- xtabs(~lcat5+Idade,data=df.aged) )
+
+rowSums(alk.freq)
+
+alk <- prop.table(alk.freq,margin=1)
+round(alk,3)    # rounded for display purposes only
+
+df.mlr <- multinom(Idade~lcat5,data=df.aged,maxit=500)
+summary(df.mlr)
+```
+
+
+```{r, echo=T, message=F, warning=F, error=F}
+lens <- seq(10,59,5)
+alk.sm <- predict(df.mlr,data.frame(lcat5=lens),type="probs")
+row.names(alk.sm) <- lens   # for clarity
+round(alk.sm,3)             # round for display purposes only
+```
+
+```{r, echo=T, fig.width=10,fig.height=5}
+alkPlot(alk,type="area",pal="gray",showLegend=TRUE,
+        leg.cex=0.7,xlab="Total Length (mm)")
+
+alkPlot(alk,type="bubble",xlab="Total Length (mm)")
+
+( len.n <- xtabs(~lcat5,data=df) )
+
+( tmp <- sweep(alk,MARGIN=1,FUN="*",STATS=len.n) ) #Aplica la matriz alk al total de las frecuencias de cada tamaño
+
+( ad1 <- colSums(tmp) )
+
+round(prop.table(ad1),3) 
+
+alkAgeDist(alk,lenA.n=rowSums(alk.freq),len.n=len.n)
+```
+
+```{r, echo=T, message=F, warning=F, error=F}
+tmp <- alkAgeDist(alk,lenA.n=rowSums(alk.freq),len.n=len.n)
+
+alkMeanVar(alk,LF~lcat5+Idade,data=df.aged,len.n=len.n)
+
+tmp <- alkMeanVar(alk,LF~lcat5+Idade,data=df.aged,len.n=len.n)
+
+df.unaged.mod <- alkIndivAge(alk,Idade~LF,data=df.unaged)
+head(df.unaged.mod)
+
+df.fnl <- rbind(df.aged,df.unaged.mod)
+
+( ad3 <- xtabs(~Idade,data=df.fnl) )
+round(prop.table(ad3),3)   # rounded for display purposes only
+
+df.sumlen <- df.fnl %>% group_by(Idade) %>%
+  summarize(n=validn(LF),mn=mean(LF,na.rm=TRUE),
+            sd=sd(LF,na.rm=TRUE),se=se(LF,na.rm=TRUE)) %>%
+  as.data.frame()
+df.sumlen
+```
+
+
+```{r, echo=T, message=F, warning=F, error=F}
+plot(LF~Idade,data=df.fnl,pch=19,col=rgb(0,0,0,1/10),
+     xlab="Idade",ylab="Total Comprimento (mm)",ylim=c(0,205)) +
+lines(mn~Idade,data=df.sumlen,lwd=2,lty=2)
+
+```
+
+
